@@ -73,3 +73,10 @@ tests/
 # TacSL sensor
 **/tactile_record/*
 **/gelsight_r15_data/*
+
+# dataset
+**/*.csv
+**/*.npy
+**/*.npz
+**/*.pt
+**/*.pkl
