@@ -93,7 +93,7 @@ class UnitreeG1GetupEnvCfg(UnitreeG1FlatEnvCfg):
 
 
 @configclass
-class UnitreeG1EnvCfg_PLAY(UnitreeG1GetupEnvCfg):
+class UnitreeG1GetupEnvCfg_PLAY(UnitreeG1GetupEnvCfg):
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
@@ -109,4 +109,4 @@ class UnitreeG1EnvCfg_PLAY(UnitreeG1GetupEnvCfg):
         # disable randomization for play
         self.observations.proprioception.enable_corruption = False
         # remove random pushing event
-        self.events.base_external_force_torque = None  # type: ignore
+        self.events.base_external_force = None  # type: ignore
