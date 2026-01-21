@@ -57,7 +57,7 @@ def terrain_levels_vel(
     move_up = (
         (distance > terrain.cfg.terrain_generator.size[0] / 2)
         & (lin_track_reward_sum > lin_track_reward_weight * move_up_threshold)
-        & (ang_track_reward_sum > ang_track_reward_weight * 0.7)
+        & (ang_track_reward_sum > ang_track_reward_weight * move_up_threshold)
     )
     # robots that walked less than half of their required distance go to simpler terrains
     move_down = (lin_track_reward_sum < lin_track_reward_weight * move_down_threshold) | (
@@ -106,7 +106,7 @@ class command_levels_vel(ManagerTermBase):
         delta_vel = cfg.params["delta_vel"]
         self.deltas = (torch.tensor(delta_vel).unsqueeze(-1) * torch.tensor([-1, 1])).to(device=env.device)
         # allowed_terrain_names
-        self.allowed_terrain_names: list[str] = cfg.params.get("allowed_terrain_names", ["random", "plane"])
+        self.allowed_terrain_names: list[str] = cfg.params.get("allowed_terrain_names", ["random_rough", "plane"])
         self.allowed_terrain_cols = []
         self.stat_env_ids = torch.arange(env.num_envs, device=env.device)
 
@@ -143,6 +143,8 @@ class command_levels_vel(ManagerTermBase):
             for col_idx in self.allowed_terrain_cols:
                 all_terrain_mask |= terrain.terrain_types == col_idx
             self.stat_env_ids = torch.where(all_terrain_mask)[0]
+        else:
+            self.stat_env_ids = torch.tensor([], dtype=torch.long, device=self.env.device)
 
     def __call__(
         self,
@@ -152,8 +154,8 @@ class command_levels_vel(ManagerTermBase):
         max_vel_range: list[tuple[float, float]],
         lin_vel_reward_threshold: float = 0.8,
         ang_vel_reward_threshold: float = 0.7,
-        allowed_terrain_names: list[str] = ["random", "plane"],
-    ) -> dict[str, torch.Tensor]:
+        allowed_terrain_names: list[str] = ["random_rough", "plane"],
+    ) -> dict[str, torch.Tensor] | None:
         command: UniformVelocityCommand = self.env.command_manager.get_term("base_velocity")
         reward: RewardManager = self.env.reward_manager
         lin_track_reward_sum = reward._episode_sums["track_lin_vel_xy_exp"][env_ids] / self.env.max_episode_length_s
@@ -167,14 +169,12 @@ class command_levels_vel(ManagerTermBase):
         )
         vel_update_ids = env_ids[mask]
 
-        if len(self.allowed_terrain_cols) > 0 and vel_update_ids.numel() > 0:
-            terrain: TerrainImporter = self.env.scene.terrain
-            terrain_type_mask = torch.zeros(len(vel_update_ids), dtype=torch.bool, device=self.env.device)
-            for env_idx, env_id in enumerate(vel_update_ids):
-                env_terrain_type = terrain.terrain_types[env_id]
-                if env_terrain_type in self.allowed_terrain_cols:
-                    terrain_type_mask[env_idx] = True
-            vel_update_ids = vel_update_ids[terrain_type_mask]
+        if vel_update_ids.numel() > 0:
+            if len(self.stat_env_ids) > 0:
+                mask = torch.isin(vel_update_ids, self.stat_env_ids)
+                vel_update_ids = vel_update_ids[mask]
+            else:
+                vel_update_ids = torch.tensor([], dtype=torch.long, device=self.env.device)
 
         if vel_update_ids.numel() > 0:
             command.lin_vel_x_ranges[vel_update_ids] = torch.clamp(
@@ -187,10 +187,13 @@ class command_levels_vel(ManagerTermBase):
                 command.ang_vel_z_ranges[vel_update_ids] + self.deltas[2], max_vel_range[2][0], max_vel_range[2][1]
             )
 
-        result = {
-            "avg_vel_lin_x": torch.mean(command.lin_vel_x_ranges[self.stat_env_ids, 1]),
-            "avg_vel_lin_y": torch.mean(command.lin_vel_y_ranges[self.stat_env_ids, 1]),
-            "avg_vel_ang_z": torch.mean(command.ang_vel_z_ranges[self.stat_env_ids, 1]),
-        }
+        if len(self.stat_env_ids) > 0:
+            result = {
+                "avg_vel_lin_x": torch.mean(command.lin_vel_x_ranges[self.stat_env_ids, 1]),
+                "avg_vel_lin_y": torch.mean(command.lin_vel_y_ranges[self.stat_env_ids, 1]),
+                "avg_vel_ang_z": torch.mean(command.ang_vel_z_ranges[self.stat_env_ids, 1]),
+            }
+        else:
+            result = None
 
         return result
