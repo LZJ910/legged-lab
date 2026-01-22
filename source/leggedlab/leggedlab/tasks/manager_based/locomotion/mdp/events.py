@@ -64,10 +64,19 @@ def apply_external_force_torque_assist(
     step_counter = max(0, env.common_step_counter - warmup_steps)
     scale = max(0.0, 1.0 - step_counter / (duration + 1e-5))
 
-    asset.permanent_wrench_composer.set_forces_and_torques(
-        forces=forces_w * scale,
-        torques=torques_w * scale,
-        body_ids=asset_cfg.body_ids,
-        env_ids=env_ids,
-        is_global=True,
-    )
+    if hasattr(asset, "permanent_wrench_composer"):
+        asset.permanent_wrench_composer.set_forces_and_torques(
+            forces=forces_w * scale,
+            torques=torques_w * scale,
+            body_ids=asset_cfg.body_ids,
+            env_ids=env_ids,
+            is_global=True,
+        )
+    else:
+        asset.set_external_force_and_torque(
+            forces=forces_w * scale,
+            torques=torques_w * scale,
+            body_ids=asset_cfg.body_ids,
+            env_ids=env_ids,
+            is_global=True,
+        )
