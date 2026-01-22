@@ -195,11 +195,17 @@ def body_contact_information(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg)
 
 def body_composed_force_b(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     asset: Articulation = env.scene[asset_cfg.name]
-    composed_force = asset.permanent_wrench_composer.composed_force_as_torch[:, asset_cfg.body_ids, :]
+    if hasattr(asset, "permanent_wrench_composer"):
+        composed_force = asset.permanent_wrench_composer.composed_force_as_torch[:, asset_cfg.body_ids, :]
+    else:
+        composed_force = asset._external_force_b[:, asset_cfg.body_ids, :]
     return composed_force.flatten(1)
 
 
 def body_composed_torque_b(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
     asset: Articulation = env.scene[asset_cfg.name]
-    composed_torque = asset.permanent_wrench_composer.composed_torque_as_torch[:, asset_cfg.body_ids, :]
+    if hasattr(asset, "permanent_wrench_composer"):
+        composed_torque = asset.permanent_wrench_composer.composed_torque_as_torch[:, asset_cfg.body_ids, :]
+    else:
+        composed_torque = asset._external_torque_b[:, asset_cfg.body_ids, :]
     return composed_torque.flatten(1)
