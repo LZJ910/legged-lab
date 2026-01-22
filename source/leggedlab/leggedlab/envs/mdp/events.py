@@ -50,7 +50,11 @@ def apply_external_force_torque_stochastic(
         env_ids = torch.arange(env.scene.num_envs, device=asset.device)
 
     # reset the composed force and torque
-    asset.permanent_wrench_composer.reset()
+    if hasattr(asset, "permanent_wrench_composer"):
+        asset.permanent_wrench_composer.reset()
+    else:
+        asset._external_force_b.zero_()
+        asset._external_torque_b.zero_()
 
     random_values = torch.rand(env_ids.shape, device=env_ids.device)
     mask = random_values < probability
@@ -73,7 +77,7 @@ def apply_external_force_torque_stochastic(
 
     # set the forces and torques into the buffers
     # note: these are only applied when you call: `asset.write_data_to_sim()`
-    asset.permanent_wrench_composer.set_forces_and_torques(
+    asset.set_external_force_and_torque(
         forces=forces,
         torques=torques,
         body_ids=asset_cfg.body_ids,
