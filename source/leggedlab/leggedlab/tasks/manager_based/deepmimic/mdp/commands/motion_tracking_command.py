@@ -233,10 +233,22 @@ class MotionTrackingCommand(CommandTerm):
         return self.errors.key_points_base_yaw_align
 
     def get_joint_indices(self, joint_ids: list[int]) -> list[int]:
-        return [self.dataset_to_robot_joint_indices[id] for id in joint_ids]
+        idx_list = []
+        for jid in joint_ids:
+            matches = (self.robot_joint_indices == jid).nonzero(as_tuple=True)[0]
+            if len(matches) == 0:
+                raise ValueError(f"Joint {jid} not found in the robot")
+            idx_list.append(matches.item())
+        return idx_list
 
     def get_body_indices(self, body_ids: list[int]) -> list[int]:
-        return [self.dataset_to_robot_body_indices[id] for id in body_ids]
+        idx_list = []
+        for bid in body_ids:
+            matches = (self.robot_body_indices == bid).nonzero(as_tuple=True)[0]
+            if len(matches) == 0:
+                raise ValueError(f"Joint {bid} not found in the robot")
+            idx_list.append(matches.item())
+        return idx_list
 
     """
     Implementation specific functions.
@@ -403,24 +415,24 @@ class MotionTrackingCommand(CommandTerm):
                 # Convert bytes to string if necessary
                 body_names_raw = dataset["body_names"].tolist()
                 self.body_names = [name.decode("utf-8") if isinstance(name, bytes) else name for name in body_names_raw]
-                self.robot_body_indices, _ = self.robot.find_bodies(self.body_names, preserve_order=True)
-                self.dataset_to_robot_body_indices = np.argsort(self.robot_body_indices).tolist()
+                robot_body_indices, _ = self.robot.find_bodies(self.body_names, preserve_order=True)
+                self.robot_body_indices = torch.tensor(robot_body_indices, device=self._env.device)
 
                 # Convert bytes to string if necessary
                 joint_names_raw = dataset["dof_names"].tolist()
                 self.joint_names = [
                     name.decode("utf-8") if isinstance(name, bytes) else name for name in joint_names_raw
                 ]
-                self.robot_joint_indices, _ = self.robot.find_joints(self.joint_names, preserve_order=True)
-                self.dataset_to_robot_joint_indices = np.argsort(self.robot_joint_indices).tolist()
+                robot_joint_indices, _ = self.robot.find_joints(self.joint_names, preserve_order=True)
+                self.robot_joint_indices = torch.tensor(robot_joint_indices, device=self._env.device)
 
                 ids, _ = self.robot.find_bodies(self.cfg.root_link_name, preserve_order=True)
-                self.root_link_ids = [self.dataset_to_robot_body_indices[id] for id in ids]
+                self.root_link_ids = self.get_body_indices(ids)
 
                 # get the tracking body names and ids
                 if self.cfg.tracking_body_names is not None:
                     ids, _ = self.robot.find_bodies(self.cfg.tracking_body_names, preserve_order=True)
-                    self.tracking_body_ids = [self.dataset_to_robot_body_indices[id] for id in ids]
+                    self.tracking_body_ids = self.get_body_indices(ids)
                 else:
                     self.tracking_body_ids, _ = self.robot.find_bodies(".*")
 
