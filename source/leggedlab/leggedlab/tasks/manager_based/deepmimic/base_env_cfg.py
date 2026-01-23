@@ -126,14 +126,11 @@ class ObservationsCfg:
         """Observations for policy group."""
 
         # observation terms (order preserved)
+        base_repr_6d = ObsTerm(func=mdp.imu_repr_6d)
         base_ang_vel = ObsTerm(func=mdp.imu_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
-        projected_gravity = ObsTerm(
-            func=mdp.imu_projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05), clip=(-100, 100)
-        )
         joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01), clip=(-100, 100))
         joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-1.5, n_max=1.5), clip=(-100, 100))
         actions = ObsTerm(func=mdp.last_action, clip=(-100, 100))
-        body_repr_6d = ObsTerm(func=mdp.body_repr_6d, params={"asset_cfg": SceneEntityCfg("robot", body_names="base")})
 
         def __post_init__(self):
             self.enable_corruption = True
@@ -141,15 +138,12 @@ class ObservationsCfg:
 
     @configclass
     class PrivilegedCfg(ObsGroup):
+        base_repr_6d = ObsTerm(func=mdp.imu_repr_6d)
         base_ang_vel = ObsTerm(func=mdp.imu_ang_vel)
-        projected_gravity = ObsTerm(func=mdp.imu_projected_gravity)
         joint_pos = ObsTerm(func=mdp.joint_pos_rel, clip=(-100, 100))
         joint_vel = ObsTerm(func=mdp.joint_vel_rel, clip=(-100, 100))
         actions = ObsTerm(func=mdp.last_action, clip=(-100, 100))
-        body_repr_6d = ObsTerm(func=mdp.body_repr_6d, params={"asset_cfg": SceneEntityCfg("robot", body_names="base")})
-        base_lin_vel = ObsTerm(
-            func=mdp.body_link_lin_vel_b, params={"asset_cfg": SceneEntityCfg("robot", body_names="base")}
-        )
+        base_lin_vel = ObsTerm(func=mdp.imu_lin_vel_b)
         joint_effort = ObsTerm(func=mdp.joint_effort)
         joint_accs = ObsTerm(func=mdp.joint_acc_diff)  # type: ignore
         feet_lin_vel = ObsTerm(
@@ -187,16 +181,9 @@ class ObservationsCfg:
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*"),
             },
         )
-        key_points_pos_b = ObsTerm(
-            func=mdp.key_points_pos_b,
-            params={
-                "command_name": "motion_tracking",
-                "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            },
-        )
-        body_link_lin_vel_b = ObsTerm(
-            func=mdp.body_link_lin_vel_b,
-            params={"asset_cfg": SceneEntityCfg("robot", body_names=".*")},
+        tracking_errors = ObsTerm(
+            func=mdp.tracking_errors,
+            params={"command_name": "motion_tracking"},
         )
 
         def __post_init__(self):
@@ -423,8 +410,8 @@ class TerminationsCfg:
     """Termination terms for the MDP."""
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    root_pos_err_termination = DoneTerm(
-        func=mdp.root_pos_err_termination,
+    root_height_err_termination = DoneTerm(
+        func=mdp.root_height_err_termination,
         params={
             "command_name": "motion_tracking",
             "threshold": 0.25,

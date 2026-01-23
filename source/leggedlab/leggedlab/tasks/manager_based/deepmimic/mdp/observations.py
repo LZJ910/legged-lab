@@ -17,40 +17,33 @@ from typing import TYPE_CHECKING, cast
 import torch
 
 import isaaclab.utils.math as math_utils
-from isaaclab.assets import Articulation
 from isaaclab.managers import SceneEntityCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
+from isaaclab.sensors import Imu
+
 from .commands import MotionTrackingCommand
 
 
-def key_points_pos_b(
-    env: ManagerBasedRLEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
-) -> torch.Tensor:
-    asset: Articulation = env.scene[asset_cfg.name]
-    body_link_pos_w = asset.data.body_link_pos_w[:, asset_cfg.body_ids]
-
-    command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
-    keypoints_b = command.cfg.side_length * torch.eye(3, device=asset.device, dtype=torch.float)
-    keypoints_b = keypoints_b.unsqueeze(0).expand(body_link_pos_w.shape[0], -1, -1, -1)
-    keypoints_w = math_utils.quat_apply(
-        asset.data.body_link_quat_w[:, asset_cfg.body_ids].unsqueeze(2).expand(-1, -1, keypoints_b.shape[2], -1),
-        keypoints_b.expand(-1, body_link_pos_w.shape[1], -1, -1),
-    ) + body_link_pos_w.unsqueeze(2)
-    keypoints = math_utils.quat_apply_inverse(
-        math_utils.yaw_quat(asset.data.root_link_quat_w.unsqueeze(1).unsqueeze(1)).expand(
-            -1, keypoints_w.shape[1], keypoints_w.shape[2], -1
-        ),
-        keypoints_w - asset.data.root_link_pos_w.unsqueeze(1).unsqueeze(1),
-    )
-    return keypoints.flatten(1)
-
-
-def body_repr_6d(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
-    asset: Articulation = env.scene[asset_cfg.name]
-    quat_wxyz = asset.data.body_link_quat_w[:, asset_cfg.body_ids, :].clone()
+def imu_repr_6d(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("imu")) -> torch.Tensor:
+    asset: Imu = env.scene[asset_cfg.name]
+    quat_wxyz = asset.data.quat_w.clone()
     rot_matrix = math_utils.matrix_from_quat(quat_wxyz)
     repr_6d: torch.Tensor = rot_matrix[..., :2]
     return repr_6d.flatten(1)
+
+
+def tracking_errors(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
+    command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
+    return torch.cat(
+        [
+            command.key_points_w_error.flatten(1),
+            command.body_lin_vel_error[:, command.root_link_ids].flatten(1),
+            command.body_ang_vel_error[:, command.root_link_ids].flatten(1),
+            command.joint_pos_error.flatten(1),
+            command.joint_vel_error.flatten(1),
+        ],
+        dim=-1,
+    )

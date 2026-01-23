@@ -159,9 +159,7 @@ class ObservationsCfg:
         joint_pos = ObsTerm(func=mdp.joint_pos_rel, clip=(-100, 100))
         joint_vel = ObsTerm(func=mdp.joint_vel_rel, clip=(-100, 100))
         actions = ObsTerm(func=mdp.last_action, clip=(-100, 100))
-        base_lin_vel = ObsTerm(
-            func=mdp.body_link_lin_vel_b, params={"asset_cfg": SceneEntityCfg("robot", body_names="base")}
-        )
+        base_lin_vel = ObsTerm(mdp.imu_lin_vel_b)
         joint_effort = ObsTerm(func=mdp.joint_effort)
         joint_accs = ObsTerm(func=mdp.joint_acc_diff)  # type: ignore
         feet_lin_vel = ObsTerm(

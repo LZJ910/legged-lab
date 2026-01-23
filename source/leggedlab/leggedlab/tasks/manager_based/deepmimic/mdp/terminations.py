@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 from .commands import MotionTrackingCommand
 
 
-def root_pos_err_termination(
+def root_height_err_termination(
     env: ManagerBasedRLEnv,
     command_name: str,
     probability: float = 0.005,

@@ -47,7 +47,6 @@ class UnitreeG1RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.feet_slide.params["asset_cfg"].body_names = ".*ankle_roll.*"
         self.rewards.feet_stumble.params["sensor_cfg"].body_names = ".*ankle_roll.*"
         # observation
-        self.observations.privileged.base_lin_vel.params["asset_cfg"].body_names = "pelvis"
         self.observations.privileged.feet_lin_vel.params["asset_cfg"].body_names = ".*ankle_roll.*"
         self.observations.privileged.feet_contact_force.params["sensor_cfg"].body_names = ".*ankle_roll.*"
         self.observations.privileged.base_mass_rel.params["asset_cfg"].body_names = "torso_link"

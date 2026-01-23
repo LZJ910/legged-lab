@@ -32,14 +32,7 @@ class UnitreeG1MimicEnvCfg(DeepMicicEnvCfg):
         # curriculum
 
         # rewards
-        self.rewards.tracking_body_lin_vel.params["asset_cfg"].body_names = [
-            "pelvis",
-            "torso_link",
-            ".*_knee_link",
-            ".*_ankle_roll_link",
-            ".*_elbow_link",
-            ".*_wrist_yaw_link",
-        ]
+        self.rewards.tracking_body_lin_vel.params["asset_cfg"].body_names = "pelvis"
         self.rewards.tracking_body_ang_vel.params["asset_cfg"].body_names = "pelvis"
         self.rewards.tracking_key_points_w_exp.params["asset_cfg"].body_names = "pelvis"
         self.rewards.tracking_key_points_exp.params["asset_cfg"].body_names = [
@@ -55,9 +48,6 @@ class UnitreeG1MimicEnvCfg(DeepMicicEnvCfg):
         self.rewards.feet_stumble.params["sensor_cfg"].body_names = ".*ankle_roll.*"
         self.rewards.feet_height_l2.params["asset_cfg"].body_names = ".*ankle_roll.*"
         # observation
-        self.observations.proprioception.body_repr_6d.params["asset_cfg"].body_names = "pelvis"
-        self.observations.privileged.body_repr_6d.params["asset_cfg"].body_names = "pelvis"
-        self.observations.privileged.base_lin_vel.params["asset_cfg"].body_names = "pelvis"
         self.observations.privileged.feet_lin_vel.params["asset_cfg"].body_names = ".*ankle_roll.*"
         self.observations.privileged.feet_contact_force.params["sensor_cfg"].body_names = ".*ankle_roll.*"
         self.observations.privileged.base_mass_rel.params["asset_cfg"].body_names = "torso_link"
@@ -92,21 +82,6 @@ class UnitreeG1MimicEnvCfg(DeepMicicEnvCfg):
             "right_wrist_roll_link",
             "right_wrist_pitch_link",
             "right_wrist_yaw_link",
-        ]
-        self.observations.privileged.key_points_pos_b.params["asset_cfg"].body_names = [
-            "pelvis",
-            "torso_link",
-            ".*_knee_link",
-            ".*_ankle_roll_link",
-            ".*_elbow_link",
-            ".*_wrist_yaw_link",
-        ]
-        self.observations.privileged.body_link_lin_vel_b.params["asset_cfg"].body_names = [
-            "torso_link",
-            ".*_knee_link",
-            ".*_ankle_roll_link",
-            ".*_elbow_link",
-            ".*_wrist_yaw_link",
         ]
         # command
         self.commands.motion_tracking.dataset_path = [

@@ -22,7 +22,7 @@ from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers.manager_base import ManagerTermBase
 from isaaclab.managers.manager_term_cfg import ObservationTermCfg
-from isaaclab.sensors import ContactSensor
+from isaaclab.sensors import ContactSensor, Imu
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
@@ -209,3 +209,10 @@ def body_composed_torque_b(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = S
     else:
         composed_torque = asset._external_torque_b[:, asset_cfg.body_ids, :]
     return composed_torque.flatten(1)
+
+
+def imu_lin_vel_b(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("imu")) -> torch.Tensor:
+    # extract the used quantities (to enable type-hinting)
+    asset: Imu = env.scene[asset_cfg.name]
+    # return the angular velocity
+    return asset.data.lin_vel_b
