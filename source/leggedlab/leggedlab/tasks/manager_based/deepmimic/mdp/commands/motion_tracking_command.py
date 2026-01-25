@@ -221,22 +221,24 @@ class MotionTrackingCommand(CommandTerm):
             .unsqueeze(0)
             .expand(body_link_pos_w.shape[0], len(self.robot_body_indices), -1, -1)
         )
-        keypoints_w = math_utils.quat_apply(
+        key_points_w = math_utils.quat_apply(
             body_link_quat_w.unsqueeze(2).expand(-1, -1, key_points_local.shape[2], -1), key_points_local
         ) + body_link_pos_w.unsqueeze(2)
         if self.cfg.use_world_frame:
-            self.errors.key_points_w[env_ids] = self.ref.key_points_w[env_ids] - keypoints_w
+            self.errors.key_points_w[env_ids] = self.ref.key_points_w[env_ids] - key_points_w
         else:
             offset_pos_w = (self.ref.body_pos_w[env_ids] - body_link_pos_w)[:, self.root_link_ids]
             offset_pos_w[..., 2] = 0
-            self.errors.key_points_w[env_ids] = self.ref.key_points_w[env_ids] - offset_pos_w.unsqueeze(1) - keypoints_w
+            self.errors.key_points_w[env_ids] = (
+                self.ref.key_points_w[env_ids] - offset_pos_w.unsqueeze(1) - key_points_w
+            )
 
         # Key points error (base yaw-aligned frame)
         key_points_base_yaw_align = math_utils.quat_apply_inverse(
             math_utils.yaw_quat(body_link_quat_w[:, self.root_link_ids].unsqueeze(1)).expand(
-                -1, keypoints_w.shape[1], keypoints_w.shape[2], -1
+                -1, key_points_w.shape[1], key_points_w.shape[2], -1
             ),
-            keypoints_w - body_link_pos_w[:, self.root_link_ids].unsqueeze(1),
+            key_points_w - body_link_pos_w[:, self.root_link_ids].unsqueeze(1),
         )
         self.errors.key_points_base_yaw_align[env_ids] = (
             self.ref.key_points_base_yaw_align[env_ids] - key_points_base_yaw_align
@@ -247,7 +249,7 @@ class MotionTrackingCommand(CommandTerm):
         indices = self.current_index
         return torch.cat(
             [
-                self.root_rot_6d[:, self.root_link_ids][indices].flatten(start_dim=1),
+                self.body_rot_6d[:, self.root_link_ids][indices].flatten(start_dim=1),
                 self.body_linear_velocities[:, self.root_link_ids][indices].flatten(start_dim=1),
                 self.body_angular_velocities[:, self.root_link_ids][indices].flatten(start_dim=1),
                 self.joint_pos[indices].flatten(start_dim=1),
@@ -463,7 +465,7 @@ class MotionTrackingCommand(CommandTerm):
         self.ref.key_points_base_yaw_align[env_ids] = self.key_points_base_yaw_align[index]
         # Update world frame positions based on configuration
         self.ref.body_pos_w[env_ids] = self.body_pos_w[index] + self._env.scene.env_origins[env_ids].unsqueeze(1)
-        self.ref.key_points_w[env_ids] = self.keypoints_w[index] + self._env.scene.env_origins[env_ids].unsqueeze(
+        self.ref.key_points_w[env_ids] = self.key_points_w[index] + self._env.scene.env_origins[env_ids].unsqueeze(
             1
         ).unsqueeze(1)
 
@@ -619,18 +621,18 @@ class MotionTrackingCommand(CommandTerm):
             .unsqueeze(0)
             .expand(self.body_pos_w.shape[0], self.body_quat_wxyz.shape[1], -1, -1)
         )
-        self.keypoints_w = math_utils.quat_apply(
+        self.key_points_w = math_utils.quat_apply(
             self.body_quat_wxyz.unsqueeze(2).expand(-1, -1, key_points_local.shape[2], -1), key_points_local
         ) + self.body_pos_w.unsqueeze(2)
         self.key_points_base_yaw_align = math_utils.quat_apply_inverse(
             math_utils.yaw_quat(self.body_quat_wxyz[:, self.root_link_ids, :].unsqueeze(2)).expand(
                 -1, self.body_pos_w.shape[1], self.body_pos_w.shape[2], -1
             ),
-            self.keypoints_w - self.body_pos_w[:, self.root_link_ids, :].unsqueeze(2),
+            self.key_points_w - self.body_pos_w[:, self.root_link_ids, :].unsqueeze(2),
         )
         body_rot_matrix = math_utils.matrix_from_quat(self.body_quat_wxyz)
-        root_rot_6d: torch.Tensor = body_rot_matrix[..., :, :2]
-        self.root_rot_6d = root_rot_6d.reshape(*self.body_quat_wxyz.shape[:-1], 6)
+        body_rot_6d: torch.Tensor = body_rot_matrix[..., :, :2]
+        self.body_rot_6d = body_rot_6d.reshape(*self.body_quat_wxyz.shape[:-1], 6)
 
     def _data_replay(self, env_ids: Sequence[int] | None = None):
         """Replay dataset to physics simulation using reference state."""
