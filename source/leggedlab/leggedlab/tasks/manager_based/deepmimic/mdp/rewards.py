@@ -99,8 +99,8 @@ def tracking_key_points_w_exp(
     command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
     body_indices = command.get_body_indices(asset_cfg.body_ids)
     key_points_w_error = command.key_points_w_error[:, body_indices]
-    body_pos_error = torch.square(key_points_w_error).sum(dim=-1).mean(dim=-1).mean(dim=-1)
-    reward = torch.exp(-body_pos_error / std**2)
+    key_points_w_error = torch.square(key_points_w_error).sum(dim=-1).mean(dim=-1).mean(dim=-1)
+    reward = torch.exp(-key_points_w_error / std**2)
     return reward
 
 
