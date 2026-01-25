@@ -37,13 +37,4 @@ def imu_repr_6d(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityC
 
 def tracking_errors(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
     command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
-    return torch.cat(
-        [
-            command.key_points_w_error.flatten(1),
-            command.body_lin_vel_error[:, command.root_link_ids].flatten(1),
-            command.body_ang_vel_error[:, command.root_link_ids].flatten(1),
-            command.joint_pos_error.flatten(1),
-            command.joint_vel_error.flatten(1),
-        ],
-        dim=-1,
-    )
+    return command.tracking_errors

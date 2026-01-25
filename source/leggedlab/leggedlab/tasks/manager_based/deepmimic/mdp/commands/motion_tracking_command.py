@@ -26,7 +26,7 @@ from isaaclab.managers import CommandTerm
 from isaaclab.markers import VisualizationMarkers
 
 if TYPE_CHECKING:
-    from isaaclab.envs import ManagerBasedEnv
+    from isaaclab.envs import ManagerBasedRLEnv
 
     from .commands_cfg import MotionTrackingCommandCfg
 
@@ -55,7 +55,7 @@ class ReferenceState:
 
 
 class TrackingErrors:
-    """Container for pre-computed tracking errors."""
+    """Container for pre-computed tracking errors and episode-level error accumulation."""
 
     def __init__(self, num_envs: int, num_bodies: int, num_joints: int, device: str):
         """Initialize tracking error tensors.
@@ -66,6 +66,7 @@ class TrackingErrors:
             num_joints: Number of joints.
             device: Device to create tensors on.
         """
+        # Instantaneous tracking errors
         self.body_pos_w = torch.zeros((num_envs, num_bodies, 3), device=device, dtype=torch.float32)
         self.body_pos_base_yaw_align = torch.zeros((num_envs, num_bodies, 3), device=device, dtype=torch.float32)
         self.body_height = torch.zeros((num_envs, num_bodies), device=device, dtype=torch.float32)
@@ -77,15 +78,52 @@ class TrackingErrors:
         self.key_points_w = torch.zeros((num_envs, num_bodies, 3, 3), device=device, dtype=torch.float32)
         self.key_points_base_yaw_align = torch.zeros((num_envs, num_bodies, 3, 3), device=device, dtype=torch.float32)
 
+        # Episode-level error accumulation for adaptive sampling
+        self.episode_body_pos_w_sum = torch.zeros(num_envs, device=device, dtype=torch.float32)
+        self.episode_body_pos_base_yaw_align_sum = torch.zeros(num_envs, device=device, dtype=torch.float32)
+        self.episode_key_points_w_sum = torch.zeros(num_envs, device=device, dtype=torch.float32)
+        self.episode_key_points_base_yaw_align_sum = torch.zeros(num_envs, device=device, dtype=torch.float32)
+        self.episode_root_height_sum = torch.zeros(num_envs, device=device, dtype=torch.float32)
+        self.episode_root_quat_magnitude_sum = torch.zeros(num_envs, device=device, dtype=torch.float32)
+        self.episode_root_lin_vel_sum = torch.zeros(num_envs, device=device, dtype=torch.float32)
+        self.episode_root_ang_vel_sum = torch.zeros(num_envs, device=device, dtype=torch.float32)
+        self.episode_joint_pos_sum = torch.zeros(num_envs, device=device, dtype=torch.float32)
+        self.episode_joint_vel_sum = torch.zeros(num_envs, device=device, dtype=torch.float32)
+        self.episode_step_count = torch.zeros(num_envs, device=device, dtype=torch.int32)
+
+    def reset_episode_errors(self, env_ids: Sequence[int] | slice | None = None):
+        """Reset episode-level error accumulation for specified environments.
+
+        Args:
+            env_ids: Environment IDs to reset. If None, reset all environments.
+        """
+        if env_ids is None:
+            env_ids = slice(None)
+
+        self.episode_body_pos_w_sum[env_ids] = 0.0
+        self.episode_body_pos_base_yaw_align_sum[env_ids] = 0.0
+        self.episode_key_points_w_sum[env_ids] = 0.0
+        self.episode_key_points_base_yaw_align_sum[env_ids] = 0.0
+        self.episode_root_height_sum[env_ids] = 0.0
+        self.episode_root_quat_magnitude_sum[env_ids] = 0.0
+        self.episode_root_lin_vel_sum[env_ids] = 0.0
+        self.episode_root_ang_vel_sum[env_ids] = 0.0
+        self.episode_joint_pos_sum[env_ids] = 0.0
+        self.episode_joint_vel_sum[env_ids] = 0.0
+        self.episode_step_count[env_ids] = 0
+
 
 class MotionTrackingCommand(CommandTerm):
     cfg: MotionTrackingCommandCfg
 
-    def __init__(self, cfg: MotionTrackingCommandCfg, env: ManagerBasedEnv):
+    def __init__(self, cfg: MotionTrackingCommandCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         # obtain the robot asset
         # -- robot
         self.robot: Articulation = env.scene[cfg.asset_name]
+
+        # env
+        self._env: ManagerBasedRLEnv = env
 
         # load the dataset
         self._load_dataset()
@@ -102,53 +140,77 @@ class MotionTrackingCommand(CommandTerm):
         # Initialize tracking errors container (updated in _compute_tracking_errors)
         self.errors = TrackingErrors(env.num_envs, len(self.body_names), len(self.joint_names), env.device)
 
+        # Track whether errors have been computed for the current step to avoid redundant calculations
+        self._errors_are_valid = False
+
     """
     Properties
     """
 
-    def _compute_tracking_errors(self):
-        """Compute all tracking errors at once to avoid redundant calculations."""
-        body_link_pos_w = self.robot.data.body_link_pos_w[:, self.robot_body_indices]
-        body_link_quat_w = self.robot.data.body_link_quat_w[:, self.robot_body_indices]
-        body_link_lin_vel_w = self.robot.data.body_link_lin_vel_w[:, self.robot_body_indices]
-        body_link_ang_vel_w = self.robot.data.body_link_ang_vel_w[:, self.robot_body_indices]
-        joint_pos = self.robot.data.joint_pos[:, self.robot_joint_indices]
-        joint_vel = self.robot.data.joint_vel[:, self.robot_joint_indices]
+    def _ensure_errors_computed(self):
+        """Ensure tracking errors are computed for the current step.
+
+        This method checks if errors have already been computed in the current step
+        and only recomputes them if necessary to avoid redundant calculations.
+        """
+        if not self._errors_are_valid:
+            self._compute_tracking_errors()
+            self._errors_are_valid = True
+
+    def _compute_tracking_errors(self, env_ids: Sequence[int] | slice | None = None):
+        """Compute all tracking errors at once to avoid redundant calculations.
+
+        Args:
+            env_ids: Environment IDs to compute errors for. If None, compute for all environments.
+        """
+        if env_ids is None:
+            env_ids = slice(None)
+
+        body_link_pos_w = self.robot.data.body_link_pos_w[env_ids, :][:, self.robot_body_indices]
+        body_link_quat_w = self.robot.data.body_link_quat_w[env_ids, :][:, self.robot_body_indices]
+        body_link_lin_vel_w = self.robot.data.body_link_lin_vel_w[env_ids, :][:, self.robot_body_indices]
+        body_link_ang_vel_w = self.robot.data.body_link_ang_vel_w[env_ids, :][:, self.robot_body_indices]
+        joint_pos = self.robot.data.joint_pos[env_ids, :][:, self.robot_joint_indices]
+        joint_vel = self.robot.data.joint_vel[env_ids, :][:, self.robot_joint_indices]
 
         # Body position error (world frame)
         if self.cfg.use_world_frame:
-            self.errors.body_pos_w = self.ref.body_pos_w - body_link_pos_w
+            self.errors.body_pos_w[env_ids] = self.ref.body_pos_w[env_ids] - body_link_pos_w
         else:
-            offset_pos_w = (self.ref.body_pos_w - body_link_pos_w)[:, self.root_link_ids]
+            offset_pos_w = (self.ref.body_pos_w[env_ids] - body_link_pos_w)[:, self.root_link_ids]
             offset_pos_w[..., 2] = 0
-            self.errors.body_pos_w = self.ref.body_pos_w - offset_pos_w - body_link_pos_w
+            self.errors.body_pos_w[env_ids] = self.ref.body_pos_w[env_ids] - offset_pos_w - body_link_pos_w
 
         # Body position error (base yaw-aligned frame)
         body_pos_base_yaw_align = math_utils.quat_apply_inverse(
             math_utils.yaw_quat(body_link_quat_w[:, self.root_link_ids]).expand(-1, body_link_pos_w.shape[1], -1),
             body_link_pos_w - body_link_pos_w[:, self.root_link_ids],
         )
-        self.errors.body_pos_base_yaw_align = self.ref.body_pos_base_yaw_align - body_pos_base_yaw_align
+        self.errors.body_pos_base_yaw_align[env_ids] = (
+            self.ref.body_pos_base_yaw_align[env_ids] - body_pos_base_yaw_align
+        )
 
         # Body height error
-        self.errors.body_height = self.errors.body_pos_w[..., 2]
+        self.errors.body_height[env_ids] = self.errors.body_pos_w[env_ids, :, 2]
 
         # Body orientation error magnitude
-        self.errors.body_quat_magnitude = math_utils.quat_error_magnitude(self.ref.body_quat, body_link_quat_w)
+        self.errors.body_quat_magnitude[env_ids] = math_utils.quat_error_magnitude(
+            self.ref.body_quat[env_ids], body_link_quat_w
+        )
 
         # Body linear velocity error (robot body frame)
         body_lin_vel_b = math_utils.quat_apply_inverse(body_link_quat_w, body_link_lin_vel_w)
-        self.errors.body_lin_vel = self.ref.body_vel - body_lin_vel_b
+        self.errors.body_lin_vel[env_ids] = self.ref.body_vel[env_ids] - body_lin_vel_b
 
         # Body angular velocity error (robot body frame)
         body_ang_vel_b = math_utils.quat_apply_inverse(body_link_quat_w, body_link_ang_vel_w)
-        self.errors.body_ang_vel = self.ref.body_ang_vel - body_ang_vel_b
+        self.errors.body_ang_vel[env_ids] = self.ref.body_ang_vel[env_ids] - body_ang_vel_b
 
         # Joint position error
-        self.errors.joint_pos = self.ref.joint_pos - joint_pos
+        self.errors.joint_pos[env_ids] = self.ref.joint_pos[env_ids] - joint_pos
 
         # Joint velocity error
-        self.errors.joint_vel = self.ref.joint_vel - joint_vel
+        self.errors.joint_vel[env_ids] = self.ref.joint_vel[env_ids] - joint_vel
 
         # Key points error (world frame)
         key_points_local = self.cfg.side_length * torch.eye(
@@ -163,11 +225,11 @@ class MotionTrackingCommand(CommandTerm):
             body_link_quat_w.unsqueeze(2).expand(-1, -1, key_points_local.shape[2], -1), key_points_local
         ) + body_link_pos_w.unsqueeze(2)
         if self.cfg.use_world_frame:
-            self.errors.key_points_w = self.ref.key_points_w - keypoints_w
+            self.errors.key_points_w[env_ids] = self.ref.key_points_w[env_ids] - keypoints_w
         else:
-            offset_pos_w = (self.ref.body_pos_w - body_link_pos_w)[:, self.root_link_ids]
+            offset_pos_w = (self.ref.body_pos_w[env_ids] - body_link_pos_w)[:, self.root_link_ids]
             offset_pos_w[..., 2] = 0
-            self.errors.key_points_w = self.ref.key_points_w - offset_pos_w.unsqueeze(1) - keypoints_w
+            self.errors.key_points_w[env_ids] = self.ref.key_points_w[env_ids] - offset_pos_w.unsqueeze(1) - keypoints_w
 
         # Key points error (base yaw-aligned frame)
         key_points_base_yaw_align = math_utils.quat_apply_inverse(
@@ -176,7 +238,9 @@ class MotionTrackingCommand(CommandTerm):
             ),
             keypoints_w - body_link_pos_w[:, self.root_link_ids].unsqueeze(1),
         )
-        self.errors.key_points_base_yaw_align = self.ref.key_points_base_yaw_align - key_points_base_yaw_align
+        self.errors.key_points_base_yaw_align[env_ids] = (
+            self.ref.key_points_base_yaw_align[env_ids] - key_points_base_yaw_align
+        )
 
     @property
     def command(self) -> torch.Tensor:
@@ -193,43 +257,68 @@ class MotionTrackingCommand(CommandTerm):
         )
 
     @property
+    def tracking_errors(self) -> torch.Tensor:
+        self._compute_tracking_errors()  # for privileged observation
+        return torch.cat(
+            [
+                self.errors.key_points_w.flatten(1),
+                self.errors.body_lin_vel[:, self.root_link_ids].flatten(1),
+                self.errors.body_ang_vel[:, self.root_link_ids].flatten(1),
+                self.errors.joint_pos.flatten(1),
+                self.errors.joint_vel.flatten(1),
+            ],
+            dim=-1,
+        )
+
+    @property
     def body_pos_w_error(self) -> torch.Tensor:
+        # Ensure errors are computed for the current step to match current ref with current robot state
+        self._ensure_errors_computed()
         return self.errors.body_pos_w
 
     @property
     def body_pos_base_yaw_align_error(self) -> torch.Tensor:
+        self._ensure_errors_computed()
         return self.errors.body_pos_base_yaw_align
 
     @property
     def body_height_error(self) -> torch.Tensor:
+        self._ensure_errors_computed()
         return self.errors.body_height
 
     @property
     def body_quat_error_magnitude(self) -> torch.Tensor:
+        self._ensure_errors_computed()
         return self.errors.body_quat_magnitude
 
     @property
     def body_lin_vel_error(self) -> torch.Tensor:
+        self._ensure_errors_computed()
         return self.errors.body_lin_vel
 
     @property
     def body_ang_vel_error(self) -> torch.Tensor:
+        self._ensure_errors_computed()
         return self.errors.body_ang_vel
 
     @property
     def joint_pos_error(self) -> torch.Tensor:
+        self._ensure_errors_computed()
         return self.errors.joint_pos
 
     @property
     def joint_vel_error(self) -> torch.Tensor:
+        self._ensure_errors_computed()
         return self.errors.joint_vel
 
     @property
     def key_points_w_error(self) -> torch.Tensor:
+        self._ensure_errors_computed()
         return self.errors.key_points_w
 
     @property
     def key_points_base_yaw_align_error(self) -> torch.Tensor:
+        self._ensure_errors_computed()
         return self.errors.key_points_base_yaw_align
 
     def get_joint_indices(self, joint_ids: list[int]) -> list[int]:
@@ -255,23 +344,73 @@ class MotionTrackingCommand(CommandTerm):
     """
 
     def _update_metrics(self):
-        self.metrics["body_pos_w_error"] = self.body_pos_w_error.abs().norm(dim=-1).mean(dim=-1)
+        # Ensure errors are computed before accumulating metrics
+        self._ensure_errors_computed()
+
+        # Accumulate individual metric errors in TrackingErrors container
+        self.errors.episode_step_count += 1
+        self.errors.episode_body_pos_w_sum += self.body_pos_w_error[:, self.tracking_body_ids].norm(dim=-1).mean(dim=-1)
+        self.errors.episode_body_pos_base_yaw_align_sum += (
+            self.body_pos_base_yaw_align_error[:, self.tracking_body_ids].norm(dim=-1).mean(dim=-1)
+        )
+        self.errors.episode_key_points_w_sum += (
+            self.key_points_w_error[:, self.tracking_body_ids].norm(dim=-1).mean(dim=-1).mean(dim=-1)
+        )
+        self.errors.episode_key_points_base_yaw_align_sum += (
+            self.key_points_base_yaw_align_error[:, self.tracking_body_ids].norm(dim=-1).mean(dim=-1).mean(dim=-1)
+        )
+        self.errors.episode_root_height_sum += self.body_height_error[:, self.root_link_ids].squeeze(1).abs()
+        self.errors.episode_root_quat_magnitude_sum += (
+            self.body_quat_error_magnitude[:, self.root_link_ids].squeeze(1).abs()
+        )
+        self.errors.episode_root_lin_vel_sum += self.body_lin_vel_error[:, self.root_link_ids].squeeze(1).norm(dim=-1)
+        self.errors.episode_root_ang_vel_sum += self.body_ang_vel_error[:, self.root_link_ids].squeeze(1).norm(dim=-1)
+        self.errors.episode_joint_pos_sum += self.joint_pos_error.abs().mean(dim=-1)
+        self.errors.episode_joint_vel_sum += self.joint_vel_error.abs().mean(dim=-1)
+
+        # Calculate average errors over the episode
+        self.metrics["body_pos_w_error"] = self.errors.episode_body_pos_w_sum / self.errors.episode_step_count
         self.metrics["body_pos_base_yaw_align_error"] = (
-            self.body_pos_base_yaw_align_error.abs().norm(dim=-1).mean(dim=-1)
+            self.errors.episode_body_pos_base_yaw_align_sum / self.errors.episode_step_count
         )
-        self.metrics["body_height_error"] = self.body_height_error.abs().mean(dim=-1)
-        self.metrics["body_quat_error_magnitude"] = self.body_quat_error_magnitude.abs().mean(dim=-1)
-        self.metrics["body_lin_vel_error"] = self.body_lin_vel_error.abs().norm(dim=-1).mean(dim=-1)
-        self.metrics["body_ang_vel_error"] = self.body_ang_vel_error.abs().norm(dim=-1).mean(dim=-1)
-        self.metrics["joint_pos_error"] = self.joint_pos_error.abs().mean(dim=-1)
-        self.metrics["joint_vel_error"] = self.joint_vel_error.abs().mean(dim=-1)
-        self.metrics["key_points_w_error"] = self.key_points_w_error.abs().sum(dim=2).norm(dim=-1).mean(dim=-1)
+        self.metrics["key_points_w_error"] = self.errors.episode_key_points_w_sum / self.errors.episode_step_count
         self.metrics["key_points_base_yaw_align_error"] = (
-            self.key_points_base_yaw_align_error.abs().sum(dim=2).norm(dim=-1).mean(dim=-1)
+            self.errors.episode_key_points_base_yaw_align_sum / self.errors.episode_step_count
         )
+        self.metrics["root_height_error"] = self.errors.episode_root_height_sum / self.errors.episode_step_count
+        self.metrics["root_quat_error_magnitude"] = (
+            self.errors.episode_root_quat_magnitude_sum / self.errors.episode_step_count
+        )
+        self.metrics["root_lin_vel_error"] = self.errors.episode_root_lin_vel_sum / self.errors.episode_step_count
+        self.metrics["root_ang_vel_error"] = self.errors.episode_root_ang_vel_sum / self.errors.episode_step_count
+        self.metrics["joint_pos_error"] = self.errors.episode_joint_pos_sum / self.errors.episode_step_count
+        self.metrics["joint_vel_error"] = self.errors.episode_joint_vel_sum / self.errors.episode_step_count
+
+        # Record sampling weight statistics
+        if self.cfg.adaptive_sampling_enabled:
+            self.metrics["sampling_weight_mean"] = torch.mean(self.sampling_weights).expand(self._env.num_envs)
+            self.metrics["sampling_weight_max"] = torch.max(self.sampling_weights).expand(self._env.num_envs)
+            self.metrics["sampling_weight_min"] = torch.min(self.sampling_weights).expand(self._env.num_envs)
+            self.metrics["sampling_weight_std"] = torch.std(self.sampling_weights).expand(self._env.num_envs)
+            self.metrics["sampling_weight_median"] = torch.median(self.sampling_weights).expand(self._env.num_envs)
+
+            normalized_weights = self.sampling_weights / torch.sum(self.sampling_weights)
+            entropy = -torch.sum(normalized_weights * torch.log(normalized_weights + 1e-10))
+            max_entropy = torch.log(
+                torch.tensor(len(self.sampling_weights), dtype=torch.float32, device=self._env.device)
+            )
+            normalized_entropy = entropy / max_entropy
+            self.metrics["sampling_weight_entropy"] = normalized_entropy.expand(self._env.num_envs)
+
+            high_weight_ratio = (self.sampling_weights > torch.mean(self.sampling_weights)).float().mean()
+            self.metrics["sampling_weight_high_ratio"] = high_weight_ratio.expand(self._env.num_envs)
 
     def _resample_command(self, env_ids: Sequence[int]):
         """Resample command indices and replay initial state."""
+        # Update adaptive sampling weights before resampling
+        if self.cfg.adaptive_sampling_enabled:
+            self._update_adaptive_sampling_weights(env_ids)
+
         self.current_index[env_ids] = (
             self._sample_indices(
                 len(env_ids) if isinstance(env_ids, (list, tuple, torch.Tensor)) else self._env.num_envs
@@ -280,7 +419,12 @@ class MotionTrackingCommand(CommandTerm):
         )
         self._update_ref_state(env_ids)
         self._data_replay(env_ids=env_ids)
-        self._compute_tracking_errors()
+        # Invalidate cached errors since reference state has changed
+        # Errors will be recomputed on next property access
+        self._errors_are_valid = False
+
+        # Reset episode error tracking for resampled environments
+        self.errors.reset_episode_errors(env_ids)
 
     def _update_command(self):
         """Update command every step and optionally replay dataset."""
@@ -291,8 +435,11 @@ class MotionTrackingCommand(CommandTerm):
         # Optionally replay dataset to physics simulation every step
         if self.cfg.replay_dataset:
             self._data_replay()
-        # Compute tracking errors after updating reference state
-        self._compute_tracking_errors()
+        # Invalidate cached errors since reference state has changed
+        # Errors will be recomputed on next property access
+        self._errors_are_valid = False
+
+        # Update episode error tracking for adaptive sampling
 
     def _update_ref_state(self, env_ids: Sequence[int] | None = None):
         """Update reference state from dataset based on current_index.
@@ -508,47 +655,138 @@ class MotionTrackingCommand(CommandTerm):
 
     def _setup_sampling_weights(self):
         """Setup sampling weights for the dataset."""
-        weights = torch.ones(self.dataset_length, device=self._env.device, dtype=torch.float32)
-        # Use the update method to set the weights
-        self.update_sampling_weights(weights)
+        self.sampling_weights = torch.ones(self.dataset_length, device=self._env.device, dtype=torch.float32)
 
     def _sample_indices(self, num_samples: int) -> torch.Tensor:
-        """Sample indices from the dataset using the configured sampling strategy."""
-        # Always use weighted sampling (weights default to uniform if not specified)
-        indices = torch.multinomial(self.sampling_probabilities, num_samples, replacement=True)
-        return indices
-
-    def update_sampling_weights(self, new_weights: list[float] | torch.Tensor):
-        """
-        Update the sampling weights during runtime.
+        """Sample indices from the dataset using the configured sampling strategy.
 
         Args:
-            new_weights: New weights for sampling. Should have the same length as dataset_length.
+            num_samples: Number of indices to sample.
+
+        Returns:
+            Sampled indices tensor of shape (num_samples,).
         """
-        if isinstance(new_weights, list):
-            if len(new_weights) != self.dataset_length:
-                raise ValueError(
-                    f"Length of new_weights ({len(new_weights)}) must match dataset length ({self.dataset_length})"
-                )
-            weights = torch.tensor(new_weights, device=self._env.device, dtype=torch.float32)
+        if self.cfg.random_sampling:
+            # Random sampling: use weighted sampling (weights default to uniform if not specified)
+            indices = torch.multinomial(self.sampling_weights, num_samples, replacement=True)
         else:
-            if new_weights.shape[0] != self.dataset_length:
-                raise ValueError(
-                    f"Length of new_weights ({new_weights.shape[0]}) must match dataset length ({self.dataset_length})"
-                )
-            weights = new_weights.to(device=self._env.device, dtype=torch.float32)
+            # Sequential sampling: all environments start from index 0
+            indices = torch.zeros(num_samples, dtype=torch.int64, device=self._env.device)
+        return indices
 
-        # Ensure weights are positive
-        self.weights = torch.clamp(weights, min=1e-8)
-        # Normalize to sum to 1
-        self.sampling_probabilities = weights / weights.sum()
+    def _update_adaptive_sampling_weights(self, env_ids: Sequence[int]):
+        """Update sampling weights based on episode performance using adaptive sampling strategy.
 
-    def get_current_weights(self) -> torch.Tensor:
-        """Get the current sampling weights (probabilities)."""
-        return self.weights.clone()
+        This method adjusts the sampling probabilities of motion clips based on tracking performance:
+        - Successful episodes (low error): decrease weights to reduce sampling frequency
+        - Failed episodes (high error): increase weights to focus training on difficult clips
+
+        Args:
+            env_ids: Environment IDs that just finished episodes.
+        """
+        if not self.cfg.adaptive_sampling_enabled:
+            return
+
+        # Calculate mean tracking error for the episode
+        error_threshold = self.cfg.success_mean_error_threshold
+        mean_error = self.errors.episode_key_points_w_sum[env_ids] / self.errors.episode_step_count[env_ids].clamp(
+            min=1
+        )
+
+        episode_length = self._env.episode_length_buf[env_ids]
+        current_weights = self.sampling_weights.clone()
+        index_offset = self.current_index.clone()[env_ids]
+        dataset_length = self.dataset_length
+
+        # Identify successful and failed episodes
+        mask_success = mean_error < error_threshold
+        mask_failure = mean_error >= error_threshold
+
+        weight_decrease = self.cfg.success_weight_decrease
+        weight_increase = self.cfg.failure_weight_increase
+
+        # Process successful episodes - reduce weights for first half
+        if mask_success.any():
+            offsets = index_offset[mask_success]
+            lengths = episode_length[mask_success] // 2
+            if lengths.numel() > 0:
+                max_len = torch.max(lengths).item()
+                steps = torch.arange(max_len, device=self._env.device)
+                all_indices = offsets.unsqueeze(1) + steps.unsqueeze(0)
+                valid_mask = steps.unsqueeze(0) < lengths.unsqueeze(1)
+                indices_to_update = all_indices[valid_mask]
+                indices_to_update %= dataset_length
+                current_weights[indices_to_update] -= weight_decrease / 2
+
+        # Process successful episodes - distinguish full-length vs early termination
+        if mask_success.any():
+            successful_lengths = episode_length[mask_success]
+            mask_full_length = successful_lengths >= self._env.max_episode_length
+            mask_early = successful_lengths < self._env.max_episode_length
+
+            all_successful_offsets = index_offset[mask_success]
+
+            # Full-length successful episodes - reduce weights for entire trajectory
+            offsets_full = all_successful_offsets[mask_full_length]
+            lengths_full = successful_lengths[mask_full_length]
+
+            if lengths_full.numel() > 0:
+                max_l = torch.max(lengths_full).item()
+                steps = torch.arange(max_l, device=self._env.device)
+                all_indices = offsets_full.unsqueeze(1) + steps.unsqueeze(0)
+                valid_mask = steps.unsqueeze(0) < lengths_full.unsqueeze(1)
+                indices_to_update = all_indices[valid_mask]
+                indices_to_update %= dataset_length
+                current_weights[indices_to_update] -= weight_decrease / 2
+
+            # Early successful episodes - reduce weights for beginning/end, increase for middle
+            offsets_early = all_successful_offsets[mask_early]
+            lengths_early = successful_lengths[mask_early]
+
+            if lengths_early.numel() > 0:
+                max_l = torch.max(lengths_early).item()
+                steps = torch.arange(max_l, device=self._env.device)
+                all_indices = offsets_early.unsqueeze(1) + steps.unsqueeze(0)
+                valid_mask = steps.unsqueeze(0) < lengths_early.unsqueeze(1)
+
+                # Split trajectory into three parts: first third, middle third, last third
+                lengths_part1 = (lengths_early // 3).unsqueeze(1)
+                lengths_part2 = ((lengths_early * 2) // 3).unsqueeze(1)
+
+                # First third - reduce weight (easy start)
+                part1_mask = (steps.unsqueeze(0) < lengths_part1) & valid_mask
+                indices_part1 = all_indices[part1_mask]
+                indices_part1 %= dataset_length
+                current_weights[indices_part1] -= weight_decrease / 2
+
+                # Last third - increase weight (difficult transition that caused early success)
+                part3_mask = (steps.unsqueeze(0) >= lengths_part2) & valid_mask
+                indices_part3 = all_indices[part3_mask]
+                indices_part3 %= dataset_length
+                current_weights[indices_part3] += weight_increase
+
+        # Process failed episodes - increase weights for entire trajectory
+        if mask_failure.any():
+            offsets = index_offset[mask_failure]
+            lengths = episode_length[mask_failure]
+            if lengths.numel() > 0:
+                max_len = torch.max(lengths).item()
+                steps = torch.arange(max_len, device=self._env.device)
+                all_indices = offsets.unsqueeze(1) + steps.unsqueeze(0)
+                valid_mask = steps.unsqueeze(0) < lengths.unsqueeze(1)
+                indices_to_update = all_indices[valid_mask]
+                indices_to_update %= dataset_length
+                current_weights[indices_to_update] += weight_increase
+
+        # Clamp weights to configured range
+        self.sampling_weights = torch.clamp(
+            current_weights,
+            min=self.cfg.weight_clamp_min,
+            max=self.cfg.weight_clamp_max,
+        )
 
 
-def find_all_files(path_list: list[str], exclude_prefix: str = None) -> list[str]:
+def find_all_files(path_list: list[str], exclude_prefix: str | None = None) -> list[str]:
     found_files = set()
     for item in path_list:
         matching_paths = glob.glob(item)

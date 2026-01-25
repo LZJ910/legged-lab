@@ -12,7 +12,6 @@ from dataclasses import MISSING
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
-from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -91,11 +90,18 @@ class CommandsCfg:
         asset_name="robot",
         resampling_time_range=(1e9, 1e9),
         dataset_path=".*",
-        root_link_name="pelvis",
+        root_link_name="base",
         tracking_body_names=[".*"],
         debug_vis=True,
         replay_dataset=False,
         use_world_frame=False,
+        random_sampling=True,
+        adaptive_sampling_enabled=True,
+        success_mean_error_threshold=0.06,
+        success_weight_decrease=0.1,
+        failure_weight_increase=0.1,
+        weight_clamp_min=0.05,
+        weight_clamp_max=1.0,
     )
 
 
@@ -312,7 +318,7 @@ class RewardsCfg:
     #     params={
     #         "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
     #         "command_name": "motion_tracking",
-    #         "std": math.sqrt(0.005),
+    #         "std": math.sqrt(0.01),
     #     },
     # )
 
@@ -322,7 +328,7 @@ class RewardsCfg:
     #     params={
     #         "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
     #         "command_name": "motion_tracking",
-    #         "std": math.sqrt(0.005),
+    #         "std": math.sqrt(0.01),
     #     },
     # )
 
@@ -432,10 +438,7 @@ class TerminationsCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
-    command_sampling_weights = CurrTerm(
-        func=mdp.command_sampling_weights,  # type: ignore
-        params={"command_name": "motion_tracking"},
-    )
+    pass
 
 
 ##

@@ -45,7 +45,7 @@ def tracking_body_pos_w_exp(
     command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
     body_indices = command.get_body_indices(asset_cfg.body_ids)
     body_pos_w_error = command.body_pos_w_error[:, body_indices]
-    body_pos_w_error = torch.square(body_pos_w_error).mean(dim=-1).mean(dim=-1)
+    body_pos_w_error = torch.square(body_pos_w_error).sum(dim=-1).mean(dim=-1)
     reward = torch.exp(-body_pos_w_error / std**2)
     return reward
 
@@ -56,7 +56,7 @@ def tracking_body_pos_exp(
     command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
     body_indices = command.get_body_indices(asset_cfg.body_ids)
     body_pos_error = command.body_pos_base_yaw_align_error[:, body_indices]
-    body_pos_error = torch.square(body_pos_error).mean(dim=-1).mean(dim=-1)
+    body_pos_error = torch.square(body_pos_error).sum(dim=-1).mean(dim=-1)
     reward = torch.exp(-body_pos_error / std**2)
     return reward
 
@@ -99,7 +99,7 @@ def tracking_key_points_w_exp(
     command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
     body_indices = command.get_body_indices(asset_cfg.body_ids)
     key_points_w_error = command.key_points_w_error[:, body_indices]
-    body_pos_error = torch.square(key_points_w_error).sum(dim=-2).mean(dim=-1).mean(dim=-1)
+    body_pos_error = torch.square(key_points_w_error).sum(dim=-1).mean(dim=-1).mean(dim=-1)
     reward = torch.exp(-body_pos_error / std**2)
     return reward
 
@@ -108,9 +108,10 @@ def tracking_key_points_exp(
     env: ManagerBasedRLEnv, command_name: str, std: float, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
     command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
-    key_points_base_yaw_align_error = command.key_points_base_yaw_align_error
+    body_indices = command.get_body_indices(asset_cfg.body_ids)
+    key_points_base_yaw_align_error = command.key_points_base_yaw_align_error[:, body_indices]
     key_points_base_yaw_align_error = (
-        torch.square(key_points_base_yaw_align_error).sum(dim=-2).mean(dim=-1).mean(dim=-1)
+        torch.square(key_points_base_yaw_align_error).sum(dim=-1).mean(dim=-1).mean(dim=-1)
     )
     reward = torch.exp(-key_points_base_yaw_align_error / std**2)
     return reward

@@ -41,6 +41,29 @@ class MotionTrackingCommandCfg(CommandTermCfg):
 
     side_length: float = 0.1
 
+    # Sampling mode configuration
+    random_sampling: bool = True
+    """If True, use random sampling. If False, all environments start from index 0."""
+
+    # Adaptive sampling configuration
+    adaptive_sampling_enabled: bool = True
+    """Whether to enable adaptive sampling based on tracking errors."""
+
+    success_mean_error_threshold: float = 0.05
+    """Success threshold for mean error in meters. Default is 5cm."""
+
+    success_weight_decrease: float = 0.1
+    """Amount to decrease sampling weight for successful trajectories."""
+
+    failure_weight_increase: float = 0.1
+    """Amount to increase sampling weight for failed trajectories."""
+
+    weight_clamp_min: float = 0.05
+    """Minimum sampling weight value."""
+
+    weight_clamp_max: float = 1.0
+    """Maximum sampling weight value."""
+
     tracking_body_frame_visualizer: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
         prim_path="/Visuals/Command/tracking_body_frame"
     )
