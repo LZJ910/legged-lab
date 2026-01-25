@@ -432,6 +432,38 @@ class TerminationsCfg:
             "probability": 0.005,
         },
     )
+    # body_pos_w_error_termination = DoneTerm(
+    #     func=mdp.body_pos_w_error_termination,
+    #     params={
+    #         "command_name": "motion_tracking",
+    #         "threshold": 0.3,
+    #         "probability": 0.005,
+    #     },
+    # )
+    # body_pos_base_yaw_align_error_termination = DoneTerm(
+    #     func=mdp.body_pos_base_yaw_align_error_termination,
+    #     params={
+    #         "command_name": "motion_tracking",
+    #         "threshold": 0.3,
+    #         "probability": 0.005,
+    #     },
+    # )
+    # key_points_w_error_termination = DoneTerm(
+    #     func=mdp.key_points_w_error_termination,
+    #     params={
+    #         "command_name": "motion_tracking",
+    #         "threshold": 0.3,
+    #         "probability": 0.005,
+    #     },
+    # )
+    # key_points_base_yaw_align_error_termination = DoneTerm(
+    #     func=mdp.key_points_base_yaw_align_error_termination,
+    #     params={
+    #         "command_name": "motion_tracking",
+    #         "threshold": 0.3,
+    #         "probability": 0.005,
+    #     },
+    # )
 
 
 @configclass

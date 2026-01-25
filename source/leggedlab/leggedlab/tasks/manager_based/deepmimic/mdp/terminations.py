@@ -44,3 +44,53 @@ def root_quat_error_magnitude_termination(
     command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
     quat_error_magnitude = command.body_quat_error_magnitude[:, command.root_link_ids].squeeze(1)
     return (quat_error_magnitude > threshold) & (random_values < probability)
+
+
+def body_pos_w_error_termination(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    probability: float = 0.005,
+    threshold: float = 0.3,
+) -> torch.Tensor:
+    random_values = torch.rand(env.num_envs, device=env.device)
+    command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
+    body_pos_w_error = command.body_pos_w_error[:, command.tracking_body_ids].norm(dim=-1).mean(dim=-1)
+    return (body_pos_w_error > threshold) & (random_values < probability)
+
+
+def body_pos_base_yaw_align_error_termination(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    probability: float = 0.005,
+    threshold: float = 0.3,
+) -> torch.Tensor:
+    random_values = torch.rand(env.num_envs, device=env.device)
+    command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
+    body_pos_w_error = command.body_pos_base_yaw_align_error[:, command.tracking_body_ids].norm(dim=-1).mean(dim=-1)
+    return (body_pos_w_error > threshold) & (random_values < probability)
+
+
+def key_points_w_error_termination(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    probability: float = 0.005,
+    threshold: float = 0.3,
+) -> torch.Tensor:
+    random_values = torch.rand(env.num_envs, device=env.device)
+    command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
+    body_pos_w_error = command.key_points_w_error[:, command.tracking_body_ids].norm(dim=-1).mean(dim=-1).mean(dim=-1)
+    return (body_pos_w_error > threshold) & (random_values < probability)
+
+
+def key_points_base_yaw_align_error_termination(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    probability: float = 0.005,
+    threshold: float = 0.3,
+) -> torch.Tensor:
+    random_values = torch.rand(env.num_envs, device=env.device)
+    command = cast(MotionTrackingCommand, env.command_manager.get_term(command_name))
+    body_pos_w_error = (
+        command.key_points_base_yaw_align_error[:, command.tracking_body_ids].norm(dim=-1).mean(dim=-1).mean(dim=-1)
+    )
+    return (body_pos_w_error > threshold) & (random_values < probability)
